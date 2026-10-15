@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lengua Quest – El visitante</title>
+<style>
+:root{
+  --bg:#f6f3ee; --card:#ffffff; --text:#2a2118; --muted:#7a6d60; --border:#e4dccf;
+  --primary:#b4472b; --primary-text:#ffffff; --ok:#1f9d55; --ok-bg:#e3f6ea;
+  --bad:#d6403a; --bad-bg:#fde8e7; --warn-bg:#fff3d6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#17130f; --card:#221c16; --text:#f3ece3; --muted:#a79a8b; --border:#3a3027;
+    --primary:#e8825f; --primary-text:#1d0f08; --ok:#4cd68a; --ok-bg:#12301f;
+    --bad:#ff7a73; --bad-bg:#3a1a19; --warn-bg:#3a2f14;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Georgia,"Times New Roman",serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;justify-content:center;padding:20px 14px}
+#app{width:100%;max-width:620px}
+h1{font-size:1.7rem;margin:6px 0 4px}
+h2{font-size:1.25rem;margin:6px 0 14px;line-height:1.45;font-weight:600}
+.sub{color:var(--muted);margin:0 0 20px;font-family:system-ui,sans-serif}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:14px}
+.hud{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;color:var(--muted);font-size:.92rem;margin-bottom:12px;font-family:system-ui,sans-serif}
+.hud b{color:var(--text)}
+.tag{display:inline-block;font-family:system-ui,sans-serif;font-size:.74rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--primary);margin:0}
+button{font:inherit;font-family:system-ui,sans-serif;cursor:pointer;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text);padding:12px 16px;text-align:left;width:100%;margin-bottom:10px;transition:transform .05s}
+button:active{transform:scale(.98)}
+button.primary{background:var(--primary);color:var(--primary-text);border-color:var(--primary);text-align:center;font-weight:600}
+button:disabled{cursor:default;opacity:1}
+button.correct{background:var(--ok-bg);border-color:var(--ok)}
+button.wrong{background:var(--bad-bg);border-color:var(--bad)}
+button.mode b{display:block;font-size:1.05rem;margin-bottom:2px}
+button.mode span{color:var(--muted);font-size:.9rem}
+input[type=text]{font:inherit;font-family:system-ui,sans-serif;width:100%;padding:12px 14px;border-radius:12px;border:2px solid var(--border);background:var(--bg);color:var(--text);margin-bottom:10px}
+input[type=text]:focus{outline:none;border-color:var(--primary)}
+.fb{border-radius:12px;padding:14px 16px;margin-bottom:12px;font-family:system-ui,sans-serif}
+.fb.ok{background:var(--ok-bg)} .fb.bad{background:var(--bad-bg)}
+.fb p{margin:4px 0}
+.tip{background:var(--warn-bg);border-radius:10px;padding:8px 12px;margin-top:8px;font-size:.93rem}
+.hearts{letter-spacing:2px}
+.big{font-size:2.6rem;font-weight:700;margin:4px 0}
+ul.review{padding-left:18px;margin:8px 0;font-family:system-ui,sans-serif}
+ul.review li{margin-bottom:10px}
+.muted{color:var(--muted);font-family:system-ui,sans-serif}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ===================== UTILIDADES ===================== */
+const LIVES = 3, TOTAL_Q = 15;
+const app = document.getElementById("app");
+let G = null;
+
+function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+const rnd = a => a[Math.floor(Math.random()*a.length)];
+const sample = (a,n) => shuffle(a.slice()).slice(0,n);
+const stripAcc = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+const normE = s => s.toLowerCase().trim().replace(/\s+/g," ");   // respeta tildes
+const normA = s => stripAcc(normE(s));                              // ignora tildes
+function getRecord(){ try{ return parseInt(localStorage.getItem("lq_record")||"0",10); }catch(e){ return 0; } }
+function setRecord(v){ try{ localStorage.setItem("lq_record",String(v)); }catch(e){} }
+function plain(html){ const d=document.createElement("div"); d.innerHTML=html; return d.textContent; }
+
+// Pregunta estática: la primera opción es la correcta
+const Q = (tag,q,correct,wrongs,tip="") => ({tag,q,opts:[correct,...wrongs],tip});
+const VF = (statement,truth,tip="") => ({tag:"Verdadero o falso",q:statement,opts:["Verdadero","Falso"],correct:truth?"Verdadero":"Falso",fixed:true,tip});
+const rep = (fn,n) => Array.from({length:n},()=>fn);
+
+/* ===================== DATOS: ORIGEN DE LAS PALABRAS ===================== */
+const DOB = [
+ ["bovem","bovino","buey"],["calidum","cálido","caldo"],["causam","causa","cosa"],["collum","collar","cuello"],
+ ["hospitem","hospedaje","huésped"],["dominum","dominar","dueño"],["filium","filial","hijo"],["fabulam","fábula","habla"],
+ ["herbam","herbicida","hierba"],["hostem","hostil","hueste"],["laborare","laboral","labrar"],["lacrimam","lacrimal","lágrima"],
+ ["lupum","lupanar","lobo"],["operam","ópera","obra"],["ovum","óvulo","huevo"],["patrem","paternal","padre"],
+ ["portam","portal","puerta"],["regem","regicida","rey"],["servum","servicio","siervo"],["vitam","vitalidad","vida"]
+];
+const ARC = [
+ ["pararse","ponerse de pie"],["anteojos","gafas"],["platicar","conversar"],["prieto","oscuro"],["liviano","ligero"],
+ ["demorarse","tardar"],["yantar","comer"],["agora","ahora"],["adrede","a propósito, con intención"],["convidar","invitar"],
+ ["chiripa","suerte favorecida"],["mandil","delantal"],["tunda","paliza"],["velada","función nocturna"]
+];
+const PREST = [
+ ["guerra","germanismo"],["yelmo","germanismo"],["alcalde","arabismo"],["naranja","arabismo"],["novela","italianismo"],
+ ["soneto","italianismo"],["tomate","americanismo"],["cacao","americanismo"],["patata","americanismo"],
+ ["chat","anglicismo"],["marketing","anglicismo"]
+];
+const TIPOS = ["germanismo","arabismo","italianismo","americanismo","anglicismo"];
+const EPOCA = {germanismo:"La época de los visigodos",arabismo:"La época de Al-Ándalus",italianismo:"El Renacimiento",
+  americanismo:"El descubrimiento de América",anglicismo:"La actualidad"};
+const EJ = {germanismo:"guerra, yelmo",arabismo:"alcalde, naranja",italianismo:"novela, soneto",americanismo:"tomate, cacao, patata",anglicismo:"chat, marketing"};
+
+function genDoblete(){
+  const d = rnd(DOB), k = Math.floor(Math.random()*3);
+  const tip = `Latín «${d[0]}» → cultismo «${d[1]}» y patrimonial «${d[2]}».`;
+  if(k===0){
+    const w = sample(DOB.filter(x=>x!==d),3).map(x=>x[1]);
+    return {tag:"Dobletes léxicos",q:`¿Cuál es el <b>cultismo</b> que viene del latín <i>${d[0]}</i>?`,opts:[d[1],...w],tip};
+  }
+  if(k===1){
+    return {tag:"Dobletes léxicos",typed:true,q:`Escribe la palabra <b>patrimonial</b> que viene del latín <i>${d[0]}</i> (pista: cultismo «${d[1]}»).`,answers:[d[2]],tip};
+  }
+  const isCult = Math.random()<0.5, w = isCult?d[1]:d[2];
+  return {tag:"Dobletes léxicos",q:`La palabra <b>${w}</b>, ¿es un cultismo o una palabra patrimonial?`,
+    opts:[isCult?"Cultismo":"Palabra patrimonial", isCult?"Palabra patrimonial":"Cultismo"],fixed:false,tip};
+}
+function genArc(){
+  const a = rnd(ARC);
+  if(Math.random()<0.5){
+    const w = sample(ARC.filter(x=>x!==a),3).map(x=>x[1]);
+    return {tag:"Arcaísmos",q:`¿Qué significa el arcaísmo <b>${a[0]}</b>?`,opts:[a[1],...w],tip:`«${a[0]}» = ${a[1]}. Es una palabra que dejó de usarse.`};
+  }
+  const w = sample(ARC.filter(x=>x!==a),3).map(x=>x[0]);
+  return {tag:"Arcaísmos",q:`¿Qué arcaísmo significa <b>${a[1]}</b>?`,opts:[a[0],...w],tip:`«${a[0]}» = ${a[1]}.`};
+}
+function genPrestamo(){
+  if(Math.random()<0.65){
+    const [w,t] = rnd(PREST);
+    return {tag:"Préstamos",q:`La palabra <b>${w}</b> es un...`,opts:[t,...sample(TIPOS.filter(x=>x!==t),3)],tip:`«${w}» es un ${t} (${EPOCA[t].toLowerCase()}).`};
+  }
+  const t = rnd(TIPOS);
+  return {tag:"Préstamos",q:`¿En qué época entraron en castellano los <b>${t}s</b>?`,
+    opts:[EPOCA[t],...sample(TIPOS.filter(x=>x!==t),3).map(x=>EPOCA[x])],tip:`Ejemplos de ${t}s: ${EJ[t]}.`};
+}
+
+const LEXICO = [
+  Q("Léxico","¿Qué es el <b>léxico</b> de una lengua?","El conjunto de palabras de esa lengua",["Las reglas para escribir bien","El estudio del origen de las palabras","Los distintos significados de una palabra"]),
+  Q("Léxico","¿Qué estudia la <b>etimología</b>?","El origen de las palabras",["El significado de las frases","Las reglas de acentuación","Los dialectos de una lengua"]),
+  Q("Léxico","¿Cuántas palabras recoge aproximadamente el Diccionario de la lengua española?","Unas 93 000",["Unas 9 300","Unas 930 000","Unas 3 000"]),
+  Q("Léxico","El castellano es una lengua romance porque...","Surge de la evolución del latín hablado en la península",["Surge de la mezcla del árabe y el griego","Se habló en Roma","Procede del euskera"]),
+  Q("Léxico","¿Qué son las <b>palabras patrimoniales</b>?","Palabras que proceden de la evolución de formas latinas",["Palabras latinas casi sin cambios","Palabras nuevas inventadas hoy","Palabras que han dejado de usarse"],"Ejemplo: capitia (latín) → cabeza."),
+  Q("Léxico","¿Qué son los <b>cultismos</b>?","Palabras latinas que entraron en castellano casi sin cambios",["Palabras que han evolucionado mucho desde el latín","Palabras tomadas del inglés","Palabras que ya no se usan"],"Ejemplo: cathedra (latín) → cátedra."),
+  Q("Léxico","¿Qué es un <b>doblete léxico</b>?","Una palabra latina que da una palabra patrimonial y un cultismo",["Dos palabras con el mismo significado en castellano","Una palabra con dos acepciones","Una palabra que viene de dos lenguas distintas"],"Ejemplo: calidum → caldo (patrimonial) y cálido (cultismo)."),
+  Q("Léxico","¿Qué es una <b>acepción</b>?","Cada uno de los significados de una palabra",["El origen de una palabra","Un sinónimo","Una palabra nueva"]),
+  Q("Léxico","En un diccionario, la etimología aparece...","Antes de las acepciones y entre paréntesis",["Al final del artículo, después de los ejemplos","Antes de la entrada, en negrita","En la última acepción"],"Ejemplo: pie (Del lat. pes, pedis)."),
+  Q("Léxico","¿De qué palabra latina procede <b>pie</b>?","Pes, pedis",["Pedes, pedum","Podium","Pessum"]),
+  Q("Léxico","En el artículo del diccionario de <b>creencia</b>, ¿qué indica «s. f.»?","Los datos morfológicos (sustantivo femenino)",["Una acepción","Un sinónimo","Un ejemplo"]),
+  Q("Léxico","En el artículo de <b>creencia</b>, ¿qué es «credo» tras la abreviatura SIN?","Un sinónimo",["Una observación","Un ejemplo","Una acepción"]),
+  Q("Léxico","En un artículo del diccionario, la <b>entrada</b> es...","La palabra que se define",["Cada uno de los significados","El ejemplo de uso","La nota con observaciones"]),
+  Q("Léxico","¿Qué es un <b>neologismo</b>?","Una palabra nueva",["Una palabra que deja de usarse","Una palabra tomada de otra lengua hace siglos","Un cultismo latino"]),
+  Q("Léxico","¿Qué es un <b>arcaísmo</b>?","Una palabra que deja de usarse",["Una palabra nueva","Una palabra extranjera","Una palabra con varias acepciones"]),
+  Q("Léxico","¿Qué son los <b>préstamos</b>?","Palabras que se incorporan al castellano desde otras lenguas",["Palabras que se inventan en castellano","Palabras que vienen siempre del latín","Palabras que cambian de significado"]),
+  VF("El castellano es una lengua romance.",true,"Surge de la evolución del latín."),
+  VF("Los cultismos han cambiado mucho respecto al latín.",false,"Los cultismos casi no cambian; las patrimoniales sí evolucionan."),
+  VF("«Cuello» es una palabra patrimonial.",true,"Viene de collum; el cultismo es «collar»."),
+  VF("Un neologismo es una palabra que ha dejado de usarse.",false,"Eso es un arcaísmo; un neologismo es una palabra nueva."),
+  ...rep(genDoblete,6), ...rep(genArc,3), ...rep(genPrestamo,4)
+];
+
+/* ===================== DATOS: LENGUAS DE ESPAÑA ===================== */
+const LENGUAS = [
+  Q("Lenguas de España","¿Cuál es la lengua <b>oficial</b> de España?","El castellano",["El catalán","El euskera","El gallego"]),
+  Q("Lenguas de España","Las <b>lenguas cooficiales</b> son...","Lenguas oficiales junto al castellano en sus territorios",["Lenguas que solo se hablan en casa","Dialectos del castellano","Lenguas extranjeras que se estudian en el colegio"]),
+  Q("Lenguas de España","¿Cuál de estas variedades NO es lengua cooficial?","Andaluz",["Gallego","Euskera","Aranés"],"El andaluz es un dialecto del castellano. Las cooficiales son catalán, euskera, gallego y aranés."),
+  Q("Lenguas de España","¿Dónde se habla el <b>aranés</b>?","En el valle de Arán (Lérida, Cataluña)",["En Galicia","En el País Vasco","En las Islas Baleares"]),
+  Q("Lenguas de España","¿Cómo se llama el catalán en la Comunidad Valenciana?","Valenciano",["Aranés","Balear","Gallego"]),
+  Q("Lenguas de España","Un <b>país plurilingüe</b> es aquel donde...","Conviven varias lenguas",["Solo se habla una lengua","Se habla únicamente latín","No hay lengua oficial"]),
+  Q("Lenguas de España","Las comunidades con dos lenguas oficiales se llaman...","Comunidades bilingües",["Comunidades monolingües","Comunidades latinas","Comunidades dialectales"]),
+  Q("Lenguas de España","¿Qué lengua es la única prerromana que se conserva en la península?","El euskera",["El gallego","El catalán","El castellano"]),
+  Q("Lenguas de España","¿Qué dos pueblos habitaban la península hace miles de años?","Íberos y celtas",["Romanos y visigodos","Griegos y fenicios","Godos y musulmanes"]),
+  Q("Lenguas de España","¿Dónde vivían los <b>celtas</b>?","En el norte y el oeste",["En el sur y la costa este","En el centro","En las islas"],"Los íberos ocupaban el sur y la costa este."),
+  Q("Lenguas de España","¿En qué año llegaron los romanos a la península?","218 a. C.",["476 d. C.","711 d. C.","1492"]),
+  Q("Lenguas de España","¿Qué lengua impusieron los romanos en Hispania?","El latín",["El griego","El íbero","El árabe"]),
+  Q("Lenguas de España","¿Qué hicieron los visigodos al asentarse en la península?","Adoptaron la cultura y la lengua latina",["Impusieron su lengua germánica","Volvieron a hablar íbero","Adoptaron el euskera"]),
+  Q("Lenguas de España","¿En qué siglo conquistaron los musulmanes la península?","Siglo VIII d. C.",["Siglo III d. C.","Siglo XII d. C.","Siglo XV d. C."]),
+  Q("Lenguas de España","¿De qué lengua surgieron el gallego y el portugués en el siglo XV?","Del galaicoportugués",["Del castellano","Del euskera","Del aragonés"]),
+  Q("Lenguas de España","¿Desde qué reino se extendió el <b>castellano</b>?","Castilla",["Aragón","Portugal","Navarra"],"El catalán se extendió desde la Corona de Aragón."),
+  Q("Lenguas de España","¿Qué es un <b>dialecto</b>?","Una variedad geográfica del español con características propias",["Una lengua distinta e independiente","Un tipo de texto","Una palabra de origen latino"]),
+  Q("Lenguas de España","La variedad <b>meridional</b> del español se habla en...","El sur de la península y Canarias",["El norte y el centro","Solo en América","Solo en Cataluña"],"La septentrional se habla en el norte y el centro."),
+  Q("Lenguas de España","¿Por qué el español de América se considera una variedad meridional?","Porque la mayoría de los colonizadores eran andaluces y extremeños",["Porque se habla en el sur del continente","Porque viene del euskera","Porque no tiene dialectos"]),
+  Q("Lenguas de España","¿Cuál es un dialecto del <b>euskera</b>?","Guipuzcoano",["Balear","Valenciano","Murciano"],"Los dialectos del euskera son el guipuzcoano y el vizcaíno."),
+  Q("Lenguas de España","¿Cuál es un dialecto del <b>catalán</b>?","Balear",["Vizcaíno","Extremeño","Canario"],"El catalán tiene el valenciano y el balear (mallorquín, menorquín, ibicenco)."),
+  VF("El euskera procede del latín.",false,"Su origen es un enigma y es anterior al latín."),
+  VF("Los romanos llegaron a la península en el siglo VIII d. C.",false,"Llegaron en el año 218 a. C.; en el siglo VIII llegaron los musulmanes."),
+  VF("El aranés es cooficial en el valle de Arán junto con el castellano y el catalán.",true),
+  VF("El español de América es una variedad meridional.",true,"La mayoría de los colonizadores eran andaluces y extremeños."),
+  VF("En España solo se habla castellano.",false,"España es un país plurilingüe: castellano, catalán, euskera, gallego y aranés.")
+];
+
+/* ===================== DATOS: TEXTO NARRATIVO ===================== */
+const NARRATIVO = [
+  Q("Texto narrativo","Un <b>texto narrativo</b> relata...","Sucesos reales o imaginarios que les ocurren a unos personajes en un tiempo y lugar",["Las características de un lugar","Argumentos a favor de una idea","Instrucciones para hacer algo"]),
+  Q("Texto narrativo","¿Cuál de estos NO es un elemento del texto narrativo?","La rima",["El narrador","La acción","Los personajes"]),
+  Q("Texto narrativo","El <b>narrador en 1.ª persona</b> es el que...","Participa en la historia que cuenta",["No participa en la historia","Solo cuenta lo que dicen los personajes","Es el autor del libro siempre"]),
+  Q("Texto narrativo","El <b>narrador en 3.ª persona</b> es el que...","No participa en la historia que cuenta",["Cuenta su propia aventura","Es el protagonista","Solo aparece en los diálogos"]),
+  Q("Texto narrativo","El <b>planteamiento</b> de una narración es...","La acción inicial del relato",["El episodio final","El conflicto principal","La descripción del lugar"]),
+  Q("Texto narrativo","El <b>nudo</b> de una narración es...","El conjunto de acciones que forman el conflicto",["La acción inicial","El episodio en que se resuelve todo","El título del relato"]),
+  Q("Texto narrativo","El <b>desenlace</b> de una narración es...","El episodio final en que se resuelve el conflicto",["La presentación de los personajes","El comienzo de la historia","El momento más tenso"]),
+  Q("Texto narrativo","¿Cómo conocemos a los <b>personajes</b> de un relato?","Por las descripciones y los diálogos",["Solo por su nombre","Por la rima de los versos","Por las acepciones"]),
+  Q("Texto narrativo","El <b>tiempo lineal</b> en una narración significa que...","Los hechos se cuentan en el orden en que sucedieron",["Se anticipan hechos futuros","Se rompe el orden cronológico","El relato dura un solo día"]),
+  Q("Texto narrativo","El <b>espacio</b> de un relato se presenta mediante...","La descripción",["El diálogo","La rima","El desenlace"]),
+  Q("Texto narrativo","¿Cuál es un ejemplo de estilo <b>directo</b>?","«Entra, niño, que llega el frío», dijo la madre.",["La madre dijo al niño que entrara porque llegaba el frío.","La madre pensaba que hacía frío.","Hacía frío y el niño no entraba."],"En el estilo directo se reproducen literalmente las palabras del personaje."),
+  Q("Texto narrativo","En <i>El conde Lucanor</i>, ¿quién aconseja al conde?","Patronio, su consejero",["Su pariente","Un ciego","Don Juan, su vecino"]),
+  Q("Texto narrativo","¿Qué consejo da el cuento del ciego a Lucanor?","No correr riesgos aunque un pariente asegure que estará a su lado",["Fiarse siempre de la familia","Viajar solo y de noche","Pedir limosna en otra villa"]),
+  Q("Texto narrativo","En <i>Los niños tontos</i>, de Ana María Matute, ¿qué hace el niño al final con sus juguetes?","Los tira al pozo",["Se los regala a su madre","Los guarda en una caja","Se los lleva a la escuela"]),
+  VF("El narrador en 3.ª persona participa en la historia que cuenta.",false),
+  VF("El desenlace es el momento en el que se resuelve el conflicto.",true),
+  VF("El nudo es la acción inicial del relato.",false,"Esa es el planteamiento.")
+];
+
+/* ===================== DATOS: LITERATURA MEDIEVAL ===================== */
+const MEDIEVAL = [
+  Q("Edad Media","La Edad Media es el periodo comprendido entre...","Los siglos V y XV d. C.",["Los siglos I y V d. C.","Los siglos XV y XVIII","Los siglos X y XX"]),
+  Q("Edad Media","¿Qué hecho marca el inicio de la Edad Media (año 476)?","La caída del Imperio romano",["El descubrimiento de América","La Revolución francesa","La invención de la escritura"]),
+  Q("Edad Media","¿Qué hecho marca el final de la Edad Media (año 1492)?","El descubrimiento de América",["La caída del Imperio romano","La Revolución francesa","La Revolución industrial"]),
+  Q("Edad Media","Los <b>privilegiados</b> de la sociedad medieval eran...","Los nobles y el clero",["Los campesinos y los burgueses","Los siervos y los artesanos","Los juglares y los pastores"]),
+  Q("Edad Media","Los <b>no privilegiados</b> de la sociedad medieval eran...","Los campesinos y los burgueses",["El rey y los nobles","Los obispos y los abades","Los duques y marqueses"]),
+  Q("Edad Media","La sociedad medieval era <b>monoteísta</b>, es decir...","Creía en un solo dios",["Creía en muchos dioses","No tenía religión","Solo creía en la ciencia"]),
+  Q("Edad Media","La <b>literatura tradicional</b> medieval...","Se transmitía oralmente y no tenía autor conocido",["Se copiaba solo en monasterios con autor","Se publicaba en periódicos","Solo se escribía en latín"]),
+  Q("Edad Media","¿Qué hacían los <b>juglares</b>?","Transmitir poemas y relatos en plazas, con música y juegos acrobáticos",["Copiar libros en los monasterios","Gobernar los pueblos","Construir catedrales"]),
+  Q("Edad Media","¿Cuál es uno de los temas más frecuentes de la narrativa medieval?","Las batallas y los héroes de la península ibérica",["Los viajes espaciales","La vida de las ciudades industriales","Las máquinas de vapor"]),
+  Q("Edad Media","Un texto escrito en <b>verso</b> es aquel que...","Está en forma de poema",["Ocupa todo el ancho de la página","Solo tiene diálogos","No tiene narrador"],"La prosa ocupa el ancho de la página."),
+  Q("Edad Media","¿Quién escribió el <i>Libro de buen amor</i>?","Juan Ruiz, el Arcipreste de Hita",["Ana María Matute","Don Quijote","Patronio"]),
+  Q("Edad Media","¿De qué trata el <i>Libro de buen amor</i>?","De las experiencias amorosas de su autor (autobiográfico)",["De batallas contra los musulmanes","De la vida de los santos","De viajes a América"]),
+  Q("Edad Media","¿Cómo es la estrofa llamada <b>cuaderna vía</b>?","Cuatro versos alejandrinos de 14 sílabas con rima consonante",["Dos versos de ocho sílabas","Cuatro versos libres sin rima","Tres versos de once sílabas"]),
+  Q("Edad Media","Un verso <b>alejandrino</b> tiene...","14 sílabas, divididas en dos hemistiquios por una cesura",["8 sílabas sin pausas","11 sílabas","7 sílabas en dos partes"]),
+  Q("Edad Media","En la <b>rima consonante</b>...","Coinciden vocales y consonantes desde la última vocal acentuada",["Solo coinciden las vocales","No coincide nada","Coinciden solo las consonantes"]),
+  Q("Edad Media","En la <b>rima asonante</b>...","Solo coinciden las vocales desde la última vocal acentuada",["Coinciden vocales y consonantes","Coinciden solo las consonantes","No hay ritmo"]),
+  Q("Edad Media","En el <i>Libro de buen amor</i>, el Amor habla como si fuera una persona. ¿Qué recurso es?","Personificación",["Hipérbole","Rima","Narrador en 3.ª persona"]),
+  Q("Edad Media","El <i>Romance de Abenámar</i> es una composición que suele tener...","Rima asonante en los versos pares",["Rima consonante en todos los versos","Cuaderna vía","Versos libres sin rima"],"El romance es una forma de poesía narrativa tradicional."),
+  VF("En la Edad Media la sociedad era politeísta.",false,"Era monoteísta."),
+  VF("Los juglares transmitían la literatura tradicional en plazas y ciudades.",true),
+  VF("El <i>Libro de buen amor</i> está escrito en prosa.",false,"Está en verso, en cuaderna vía."),
+  VF("Una estrofa de cuaderna vía tiene cuatro versos alejandrinos.",true)
+];
+
+/* ===================== DATOS: ACENTUACIÓN ===================== */
+const ACC = [
+  ...["música","género","informático","tecnológico","inalámbrico","eléctrico"].map(w=>[w,"esdrújula"]),
+  ...["portátil","líder","Félix","póquer","móvil","mensaje","virus","gente","programa","grupo","diseño"].map(w=>[w,"llana"]),
+  ...["buzón","televisión","japonés","escribirá","café","Jesús","celular","robot","virtual","ordenador","digital","sociedad"].map(w=>[w,"aguda"]),
+  ...["red","mal","ti","dio","seis","fui"].map(w=>[w,"monosílaba"])
+];
+const CATS = ["esdrújula","llana","aguda","monosílaba"];
+const REGLA = {
+  "esdrújula":"Esdrújula: sílaba tónica en la antepenúltima. Se tilda siempre, sin excepción.",
+  "llana":"Llana (o grave): sílaba tónica en la penúltima. Se tilda si acaba en consonante que no sea -n ni -s.",
+  "aguda":"Aguda: sílaba tónica en la última. Se tilda si acaba en -n, -s o vocal.",
+  "monosílaba":"Monosílaba: una sola sílaba. No se tilda, salvo la tilde diacrítica."
+};
+function genClasifica(){
+  const [w,c] = rnd(ACC);
+  return {tag:"Acentuación",q:`¿Cómo se clasifica <b>${w}</b> según su sílaba tónica?`,opts:[c,...CATS.filter(x=>x!==c)],fixed:false,tip:`«${w}»: ${REGLA[c]}`};
+}
+function genTilde(){
+  const con = ACC.filter(([w])=>w!==stripAcc(w) );
+  const [w,c] = rnd(con);
+  return {tag:"Acentuación",typed:true,exact:true,q:`Escribe <b>${stripAcc(w)}</b> con su tilde (es una palabra ${c}).`,answers:[w.toLowerCase()],tip:`«${w}»: ${REGLA[c]}`};
+}
+const ACENTOS = [
+  Q("Acentuación","¿Dónde está la sílaba tónica en una palabra <b>aguda</b>?","En la última sílaba",["En la penúltima","En la antepenúltima","En la primera siempre"]),
+  Q("Acentuación","¿Dónde está la sílaba tónica en una palabra <b>llana</b>?","En la penúltima sílaba",["En la última","En la antepenúltima","No tiene"]),
+  Q("Acentuación","¿Dónde está la sílaba tónica en una palabra <b>esdrújula</b>?","En la antepenúltima sílaba",["En la penúltima","En la última","En cualquiera"]),
+  Q("Acentuación","¿Cuándo llevan tilde las palabras <b>esdrújulas</b>?","Siempre, sin excepción",["Solo si acaban en vocal","Solo si acaban en -n o -s","Nunca"]),
+  Q("Acentuación","¿Cuándo llevan tilde las palabras <b>llanas</b>?","Cuando acaban en consonante que no sea -n ni -s",["Cuando acaban en vocal, -n o -s","Siempre","Nunca"],"Ejemplos: líder, portátil (con tilde); mensaje, virus (sin tilde)."),
+  Q("Acentuación","¿Cuándo llevan tilde las palabras <b>agudas</b>?","Cuando acaban en -n, -s o vocal",["Cuando acaban en cualquier consonante menos -n o -s","Siempre","Nunca"],"Ejemplos: buzón, café (con tilde); celular, ordenador (sin tilde)."),
+  Q("Acentuación","¿Cuándo llevan tilde las palabras <b>monosílabas</b>?","Normalmente nunca, salvo la tilde diacrítica",["Siempre","Si acaban en vocal","Si acaban en -n"],"La tilde diacrítica distingue palabras con doble significado."),
+  Q("Acentuación","¿Cuál de estas palabras lleva tilde?","Televisión",["Ordenador","Celular","Programa"],"«Televisión» es aguda y acaba en -n."),
+  Q("Acentuación","¿Cuál de estas palabras NO lleva tilde?","Ordenador",["Portátil","Móvil","Líder"],"«Ordenador» es aguda y acaba en -r."),
+  VF("Todas las palabras esdrújulas llevan tilde.",true),
+  VF("«Mensaje» es una palabra aguda.",false,"Es llana y acaba en vocal, por eso no lleva tilde."),
+  ...rep(genClasifica,6), ...rep(genTilde,4)
+];
+
+/* ===================== MODOS ===================== */
+const MODES = {
+  lexico:  {icon:"🏛️", name:"Origen de las palabras", desc:"Patrimoniales, cultismos, dobletes, arcaísmos, préstamos y diccionario", items:LEXICO},
+  lenguas: {icon:"🗺️", name:"Lenguas de España", desc:"Historia, lenguas cooficiales y dialectos", items:LENGUAS},
+  narrativo:{icon:"📖", name:"Texto narrativo", desc:"Narrador, acción, personajes, tiempo y espacio", items:NARRATIVO},
+  medieval:{icon:"⚔️", name:"Literatura medieval", desc:"Edad Media, juglares, Libro de buen amor, rima y métrica", items:MEDIEVAL},
+  acentos: {icon:"✏️", name:"Acentuación", desc:"Agudas, llanas, esdrújulas y monosílabas", items:ACENTOS},
+  mix:     {icon:"🎯", name:"Modo mixto", desc:"Todos los temas a la vez", items:[...LEXICO,...LENGUAS,...NARRATIVO,...MEDIEVAL,...ACENTOS]}
+};
+
+/* ===================== JUEGO ===================== */
+function draw(){
+  if(!G.pool.length) G.pool = shuffle(MODES[G.mode].items.slice());
+  const it = G.pool.pop();
+  return typeof it === "function" ? it() : it;
+}
+
+function showMenu(){
+  app.innerHTML = `
+    <h1>📜 Lengua Quest</h1>
+    <p class="sub">Tema 1: El visitante · Récord: <b>${getRecord()}</b></p>
+    ${Object.entries(MODES).map(([k,m])=>`<button class="mode" data-m="${k}"><b>${m.icon} ${m.name}</b><span>${m.desc}</span></button>`).join("")}
+    <p class="muted">${TOTAL_Q} preguntas · ${LIVES} vidas · las rachas dan puntos extra</p>`;
+  app.querySelectorAll("button.mode").forEach(b=>b.onclick=()=>startGame(b.dataset.m));
+}
+
+function startGame(mode){
+  G = {mode, lives:LIVES, score:0, streak:0, n:0, errors:[], pool:[]};
+  nextQuestion();
+}
+
+function hud(){
+  return `<div class="hud">
+    <span>Pregunta <b>${G.n}/${TOTAL_Q}</b></span>
+    <span>Puntos <b>${G.score}</b></span>
+    <span>Racha <b>${G.streak}</b></span>
+    <span class="hearts">${"❤️".repeat(G.lives)}${"🖤".repeat(LIVES-G.lives)}</span></div>`;
+}
+
+function nextQuestion(){
+  if(G.n>=TOTAL_Q || G.lives<=0) return endGame();
+  G.n++;
+  const q = draw();
+  if(q.typed) renderTyped(q); else renderChoice(q);
+}
+
+function renderChoice(q){
+  const correct = q.correct ?? q.opts[0];
+  const opts = q.fixed ? q.opts.slice() : shuffle(q.opts.slice());
+  app.innerHTML = hud()+`<div class="card"><p class="tag">${q.tag}</p><h2>${q.q}</h2><div id="opts"></div></div><div id="fb"></div>`;
+  const box = document.getElementById("opts");
+  opts.forEach(o=>{
+    const b = document.createElement("button"); b.textContent = o;
+    b.onclick = ()=>{
+      box.querySelectorAll("button").forEach(x=>{ x.disabled=true; if(x.textContent===correct) x.classList.add("correct"); });
+      const ok = o===correct; if(!ok) b.classList.add("wrong");
+      feedback(ok, correct, q);
+    };
+    box.appendChild(b);
+  });
+}
+
+function renderTyped(q){
+  app.innerHTML = hud()+`<div class="card"><p class="tag">${q.tag}</p><h2>${q.q}</h2>
+    <input type="text" id="inp" placeholder="Escribe la respuesta…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="primary" id="chk">Comprobar</button></div><div id="fb"></div>`;
+  const inp = document.getElementById("inp"), chk = document.getElementById("chk");
+  inp.focus();
+  const check = ()=>{
+    if(!inp.value.trim()) return;
+    inp.disabled = true; chk.style.display="none";
+    const f = q.exact ? normE : normA;
+    feedback(f(inp.value)===f(q.answers[0]) || q.answers.map(f).includes(f(inp.value)), q.answers[0], q);
+  };
+  chk.onclick = check;
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); check(); } });
+}
+
+function feedback(ok, correct, q){
+  if(ok){ G.streak++; G.score += 10 + Math.min(G.streak-1,5)*2; }
+  else { G.streak = 0; G.lives--; G.errors.push({q:plain(q.q), correct, tip:q.tip||""}); }
+  const last = G.n>=TOTAL_Q || G.lives<=0;
+  document.getElementById("fb").innerHTML = `<div class="fb ${ok?"ok":"bad"}">
+      <p><b>${ok?"✅ ¡Correcto!":"❌ Incorrecto"}</b></p>
+      ${ok?"":`<p>Respuesta correcta: <b>${correct}</b></p>`}
+      ${q.tip?`<div class="tip">💡 ${q.tip}</div>`:""}
+    </div><button class="primary" id="next">${last?"Ver resultados":"Siguiente →"}</button>`;
+  const next = document.getElementById("next");
+  next.onclick = nextQuestion; next.focus();
+  app.querySelector(".hud").outerHTML = hud();
+}
+
+function endGame(){
+  const rec = getRecord(), isRecord = G.score > rec;
+  if(isRecord) setRecord(G.score);
+  const rango = G.score>=200 ? "🏆 ¡Maestro de la lengua!" : G.score>=120 ? "🥈 ¡Muy bien!" : "💪 ¡Sigue practicando!";
+  const review = G.errors.length
+    ? `<ul class="review">${G.errors.map(e=>`<li><b>${e.q}</b><br>Respuesta: ${e.correct}${e.tip?`<br><span class="muted">${e.tip}</span>`:""}</li>`).join("")}</ul>`
+    : `<p>🏆 ¡Partida perfecta, sin errores!</p>`;
+  app.innerHTML = `
+    <h1>${G.lives<=0?"💔 Te quedaste sin vidas":"🎉 ¡Partida completada!"}</h1>
+    <div class="card"><div class="muted">Tu puntuación</div><div class="big">${G.score}</div>
+      <p class="muted">${rango}</p>
+      <p class="muted">${isRecord?"🥇 ¡Nuevo récord!":"Récord: <b>"+rec+"</b>"}</p></div>
+    <div class="card"><p class="tag">Para repasar</p>${review}</div>
+    <button class="primary" id="again">Jugar otra vez</button>
+    <button id="menu" style="text-align:center">Volver al menú</button>`;
+  document.getElementById("again").onclick = ()=>startGame(G.mode);
+  document.getElementById("menu").onclick = showMenu;
+}
+
+showMenu();
+</script>
+</body>
+</html>
